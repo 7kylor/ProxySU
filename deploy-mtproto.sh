@@ -116,32 +116,8 @@ EOF
     
     sysctl -p /etc/sysctl.d/99-mtproto-ultra.conf
     
-    # CPU performance optimizations (simplified to avoid hanging)
-    log "Applying CPU performance optimizations..."
-    
-    # Set CPU governor to performance (with timeout)
-    timeout 10 bash -c '
-        if command -v cpupower &> /dev/null; then
-            cpupower frequency-set -g performance 2>/dev/null || true
-        fi
-        
-        # Alternative method for CPU governor
-        if [ -d /sys/devices/system/cpu/cpu0/cpufreq ]; then
-            echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
-        fi
-    ' || log "CPU governor optimization skipped (timeout)"
-    
-    # Network interface optimizations (simplified)
-    log "Optimizing network interfaces..."
-    
-    # Get primary network interface
-    NET_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
-    
-    if [ -n "$NET_INTERFACE" ] && command -v ethtool &> /dev/null; then
-        timeout 5 ethtool -G "$NET_INTERFACE" rx 4096 tx 4096 2>/dev/null || true
-        timeout 5 ethtool -K "$NET_INTERFACE" gso on gro on tso on 2>/dev/null || true
-        log "Network interface $NET_INTERFACE optimized"
-    fi
+    # Skip CPU optimizations to prevent hanging
+    log "Skipping CPU optimizations (can cause hanging on some systems)"
     
     log "Ultra-low latency system optimizations applied"
 }
@@ -151,22 +127,35 @@ install_docker() {
     
     if command -v docker &> /dev/null; then
         log "Docker already installed"
+        # Make sure Docker is running
+        systemctl start docker 2>/dev/null || true
         return
     fi
     
-    # Install Docker
-    curl -fsSL https://get.docker.com | sh
+    log "Downloading Docker installation script..."
+    # Install Docker with timeout
+    if ! timeout 300 bash -c 'curl -fsSL https://get.docker.com | sh'; then
+        error "Docker installation timed out or failed"
+    fi
     
+    log "Starting Docker service..."
     # Start and enable Docker
     systemctl start docker
     systemctl enable docker
     
-    # Verify installation
-    if ! command -v docker &> /dev/null; then
-        error "Docker installation failed"
-    fi
+    # Wait for Docker to be ready
+    log "Waiting for Docker to be ready..."
+    for i in {1..30}; do
+        if docker info >/dev/null 2>&1; then
+            break
+        fi
+        sleep 2
+        if [ $i -eq 30 ]; then
+            error "Docker failed to start properly"
+        fi
+    done
     
-    log "Docker installed successfully"
+    log "Docker installed and started successfully"
 }
 
 configure_firewall() {
@@ -414,27 +403,43 @@ delete_proxy() {
 
 print_connection_info() {
     log "Deployment completed successfully!"
+    
+    # Get server IP
+    SERVER_IP=$(curl -s ipv4.icanhazip.com 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || hostname -I | awk '{print $1}')
+    
     echo ""
-    echo "========================="
-    echo "MTProto Proxy Information"
-    echo "========================="
-    echo "Server IP: $(curl -s ipv4.icanhazip.com || hostname -I | awk '{print $1}')"
-    echo "Port: $PORT"
-    echo "Secret: $SECRET"
+    echo "########################################"
+    echo "#        DEPLOYMENT SUCCESSFUL!       #"
+    echo "########################################"
     echo ""
-    echo "Connection URL for Telegram:"
-    echo "tg://proxy?server=$(curl -s ipv4.icanhazip.com || hostname -I | awk '{print $1}')&port=$PORT&secret=$SECRET"
+    echo " MTProto Proxy is now running!"
     echo ""
-    echo "Management Commands:"
-    echo "  Status:    mtproto-status"
-    echo "  Logs:      docker logs mtproto-proxy"
-    echo "  Restart:   docker restart mtproto-proxy"
-    echo "  Stop:      docker stop mtproto-proxy"
-    echo "  Start:     docker start mtproto-proxy"
-    echo "  DELETE:    sudo ./deploy-mtproto.sh delete"
+    echo " CONNECTION DETAILS:"
+    echo "   Server IP: $SERVER_IP"
+    echo "   Port: $PORT"
+    echo "   Secret: $SECRET"
     echo ""
-    echo "Configuration saved to: /etc/mtproto/mtg.toml"
-    echo "========================="
+    echo " TELEGRAM CONNECTION STRING:"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "tg://proxy?server=$SERVER_IP&port=$PORT&secret=$SECRET"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo " Copy the connection string above and paste it in Telegram"
+    echo ""
+    echo "🔧 MANAGEMENT COMMANDS:"
+    echo "   Status:    mtproto-status"
+    echo "   Logs:      docker logs mtproto-proxy"
+    echo "   Restart:   docker restart mtproto-proxy"
+    echo "   Stop:      docker stop mtproto-proxy"
+    echo "   Start:     docker start mtproto-proxy"
+    echo "   DELETE:    sudo ./deploy-mtproto.sh delete"
+    echo ""
+    echo " Configuration: /etc/mtproto/mtg.toml"
+    echo ""
+    echo "########################################"
+    echo "#         ULTRA-LOW LATENCY           #"
+    echo "#       MTPROTO PROXY READY!          #"
+    echo "########################################"
 }
 
 show_usage() {
@@ -471,14 +476,23 @@ main() {
     case "${1:-deploy}" in
         deploy)
             log "Starting MTProto proxy deployment..."
+            echo "Progress: [1/9] Checking system requirements..."
             check_requirements
+            echo "Progress: [2/9] Applying system optimizations..."
             optimize_system
+            echo "Progress: [3/9] Installing Docker..."
             install_docker
+            echo "Progress: [4/9] Configuring firewall..."
             configure_firewall
+            echo "Progress: [5/9] Generating MTProto secret..."
             generate_secret
+            echo "Progress: [6/9] Creating configuration..."
             create_config
+            echo "Progress: [7/9] Deploying container..."
             deploy_container
+            echo "Progress: [8/9] Setting up monitoring..."
             setup_monitoring
+            echo "Progress: [9/9] Cleaning up..."
             cleanup
             print_connection_info
             log "Deployment script completed successfully!"
