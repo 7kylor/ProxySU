@@ -56,6 +56,9 @@ check_requirements() {
 optimize_system() {
     log "Applying ultra-low latency system optimizations..."
     
+    # Disable exit on error temporarily for sysctl
+    set +e
+    
     # Ultra-aggressive network optimizations for lowest latency
     cat > /etc/sysctl.d/99-mtproto-ultra.conf << EOF
 # Ultra-low latency optimizations for MTProto proxy
@@ -103,21 +106,21 @@ net.ipv4.tcp_moderate_rcvbuf = 0
 # Reduce network latency
 net.ipv4.tcp_autocorking = 0
 net.ipv4.tcp_thin_linear_timeouts = 1
-net.ipv4.tcp_thin_dupack = 1
 
 # Memory and CPU optimizations
 vm.swappiness = 1
 vm.dirty_ratio = 15
 vm.dirty_background_ratio = 5
 vm.overcommit_memory = 1
-kernel.sched_migration_cost_ns = 5000000
 kernel.sched_autogroup_enabled = 0
 EOF
     
-    sysctl -p /etc/sysctl.d/99-mtproto-ultra.conf
+    # Apply sysctl settings and continue even if some fail
+    log "Applying network optimizations (ignoring unsupported parameters)..."
+    sysctl -p /etc/sysctl.d/99-mtproto-ultra.conf 2>/dev/null || true
     
-    # Skip CPU optimizations to prevent hanging
-    log "Skipping CPU optimizations (can cause hanging on some systems)"
+    # Re-enable exit on error
+    set -e
     
     log "Ultra-low latency system optimizations applied"
 }
