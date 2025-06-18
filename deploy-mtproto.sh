@@ -248,7 +248,7 @@ deploy_container() {
     docker stop $CONTAINER_NAME 2>/dev/null || true
     docker rm $CONTAINER_NAME 2>/dev/null || true
     
-    # Run ultra-optimized container with minimal latency
+    # Run ultra-optimized container with minimal latency (host network)
     docker run -d \
         --name $CONTAINER_NAME \
         --restart unless-stopped \
@@ -259,15 +259,9 @@ deploy_container() {
         --oom-kill-disable=false \
         --network=host \
         --security-opt no-new-privileges:true \
-        --cap-add=NET_ADMIN \
-        --cap-add=SYS_NICE \
         --read-only \
         --tmpfs /tmp:rw,noexec,nosuid,size=200m,nr_inodes=400k \
         -v /etc/mtproto/mtg.toml:/config.toml:ro \
-        --sysctl net.core.somaxconn=65535 \
-        --sysctl net.ipv4.tcp_keepalive_time=300 \
-        --sysctl net.ipv4.tcp_keepalive_intvl=30 \
-        --sysctl net.ipv4.tcp_fin_timeout=15 \
         --ulimit nofile=1048576:1048576 \
         --ulimit nproc=65536:65536 \
         --log-driver none \
