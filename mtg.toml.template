@@ -1,0 +1,18 @@
+# MTProto Proxy Configuration
+# Replace SECRET_HERE with your generated secret
+# Replace PORT_HERE with your desired port (default 443)
+
+secret = "SECRET_HERE"
+bind-to = "0.0.0.0:PORT_HERE"
+
+# Performance optimizations for low latency
+stats-bind-to = "127.0.0.1:3129"
+multiplex-per-connection = 500
+prefer-ip = "prefer-ipv4"
+
+# Security settings
+secure-only = true
+
+# Buffer sizes for performance
+read-buffer-size = 65536
+write-buffer-size = 65536 

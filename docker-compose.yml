@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  mtproto-proxy:
+    image: nineseconds/mtg:2
+    container_name: mtproto-proxy
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - ./mtg.toml:/config.toml:ro
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=100m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - mtproto-net
+
+networks:
+  mtproto-net:
+    driver: bridge
