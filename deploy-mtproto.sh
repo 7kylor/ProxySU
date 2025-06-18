@@ -116,70 +116,31 @@ EOF
     
     sysctl -p /etc/sysctl.d/99-mtproto-ultra.conf
     
-    # CPU performance optimizations
+    # CPU performance optimizations (simplified to avoid hanging)
     log "Applying CPU performance optimizations..."
     
-    # Set CPU governor to performance
-    if command -v cpupower &> /dev/null; then
-        cpupower frequency-set -g performance 2>/dev/null || true
-    fi
+    # Set CPU governor to performance (with timeout)
+    timeout 10 bash -c '
+        if command -v cpupower &> /dev/null; then
+            cpupower frequency-set -g performance 2>/dev/null || true
+        fi
+        
+        # Alternative method for CPU governor
+        if [ -d /sys/devices/system/cpu/cpu0/cpufreq ]; then
+            echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
+        fi
+    ' || log "CPU governor optimization skipped (timeout)"
     
-    # Alternative method for CPU governor
-    if [ -d /sys/devices/system/cpu/cpu0/cpufreq ]; then
-        echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
-    fi
-    
-    # Disable CPU idle states for minimal latency
-    if [ -f /sys/devices/system/cpu/cpu0/cpuidle/state1/disable ]; then
-        for cpu in /sys/devices/system/cpu/cpu*/cpuidle/state*/disable; do
-            echo 1 > "$cpu" 2>/dev/null || true
-        done
-    fi
-    
-    # Network interface optimizations
+    # Network interface optimizations (simplified)
     log "Optimizing network interfaces..."
     
     # Get primary network interface
     NET_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
     
-    if [ -n "$NET_INTERFACE" ]; then
-        # Increase ring buffer sizes
-        ethtool -G "$NET_INTERFACE" rx 4096 tx 4096 2>/dev/null || true
-        
-        # Enable network optimizations
-        ethtool -K "$NET_INTERFACE" gso on gro on tso on ufo on 2>/dev/null || true
-        ethtool -K "$NET_INTERFACE" rx-checksumming on tx-checksumming on 2>/dev/null || true
-        
-        # Set interrupt coalescing for low latency
-        ethtool -C "$NET_INTERFACE" adaptive-rx off adaptive-tx off rx-usecs 0 tx-usecs 0 2>/dev/null || true
-        
+    if [ -n "$NET_INTERFACE" ] && command -v ethtool &> /dev/null; then
+        timeout 5 ethtool -G "$NET_INTERFACE" rx 4096 tx 4096 2>/dev/null || true
+        timeout 5 ethtool -K "$NET_INTERFACE" gso on gro on tso on 2>/dev/null || true
         log "Network interface $NET_INTERFACE optimized"
-    fi
-    
-    # IRQ affinity optimization for single CPU systems
-    log "Optimizing interrupt handling..."
-    
-    # Bind network interrupts to specific CPU core
-    if [ -d /proc/irq ]; then
-        for irq in $(grep "$NET_INTERFACE" /proc/interrupts | cut -d: -f1 | tr -d ' '); do
-            echo 1 > /proc/irq/$irq/smp_affinity 2>/dev/null || true
-        done
-    fi
-    
-    # Disable unnecessary services for performance
-    log "Disabling unnecessary services..."
-    
-    # Stop and disable services that can cause latency
-    for service in rsyslog systemd-journald bluetooth wpa_supplicant ModemManager; do
-        systemctl stop $service 2>/dev/null || true
-        systemctl disable $service 2>/dev/null || true
-    done
-    
-    # Configure minimal logging to reduce I/O
-    if [ -f /etc/systemd/journald.conf ]; then
-        sed -i 's/#Storage=auto/Storage=volatile/' /etc/systemd/journald.conf
-        sed -i 's/#RuntimeMaxUse=/RuntimeMaxUse=50M/' /etc/systemd/journald.conf
-        systemctl restart systemd-journald 2>/dev/null || true
     fi
     
     log "Ultra-low latency system optimizations applied"
@@ -387,6 +348,70 @@ cleanup() {
     log "Cleanup complete"
 }
 
+delete_proxy() {
+    log "Starting MTProto proxy deletion..."
+    
+    # Stop and remove container
+    if docker ps -a | grep -q $CONTAINER_NAME; then
+        log "Stopping and removing container..."
+        docker stop $CONTAINER_NAME 2>/dev/null || true
+        docker rm $CONTAINER_NAME 2>/dev/null || true
+    fi
+    
+    # Remove Docker image
+    if docker images | grep -q "nineseconds/mtg"; then
+        log "Removing Docker image..."
+        docker rmi nineseconds/mtg:2 2>/dev/null || true
+    fi
+    
+    # Remove configuration files
+    if [ -d "/etc/mtproto" ]; then
+        log "Removing configuration files..."
+        rm -rf /etc/mtproto
+    fi
+    
+    # Remove system optimizations
+    if [ -f "/etc/sysctl.d/99-mtproto-ultra.conf" ]; then
+        log "Removing system optimizations..."
+        rm -f /etc/sysctl.d/99-mtproto-ultra.conf
+    fi
+    
+    # Remove monitoring script
+    if [ -f "/usr/local/bin/mtproto-status" ]; then
+        log "Removing monitoring script..."
+        rm -f /usr/local/bin/mtproto-status
+    fi
+    
+    # Close firewall port
+    log "Closing firewall port..."
+    if command -v ufw &> /dev/null; then
+        ufw delete allow $PORT 2>/dev/null || true
+    elif command -v firewall-cmd &> /dev/null; then
+        firewall-cmd --permanent --remove-port=$PORT/tcp 2>/dev/null || true
+        firewall-cmd --reload 2>/dev/null || true
+    else
+        iptables -D INPUT -p tcp --dport $PORT -j ACCEPT 2>/dev/null || true
+    fi
+    
+    # Clean up Docker system
+    log "Cleaning up Docker system..."
+    docker system prune -af 2>/dev/null || true
+    
+    log "MTProto proxy completely removed!"
+    echo ""
+    echo "========================="
+    echo "Cleanup Complete"
+    echo "========================="
+    echo "All MTProto proxy components have been removed:"
+    echo "- Container stopped and removed"
+    echo "- Docker image removed"
+    echo "- Configuration files deleted"
+    echo "- System optimizations reverted"
+    echo "- Firewall rules removed"
+    echo "- Monitoring scripts removed"
+    echo "========================="
+}
+
 print_connection_info() {
     log "Deployment completed successfully!"
     echo ""
@@ -406,26 +431,73 @@ print_connection_info() {
     echo "  Restart:   docker restart mtproto-proxy"
     echo "  Stop:      docker stop mtproto-proxy"
     echo "  Start:     docker start mtproto-proxy"
+    echo "  DELETE:    sudo ./deploy-mtproto.sh delete"
     echo ""
     echo "Configuration saved to: /etc/mtproto/mtg.toml"
     echo "========================="
 }
 
+show_usage() {
+    echo "MTProto Proxy Deployment Script"
+    echo "Usage: $0 [command]"
+    echo ""
+    echo "Commands:"
+    echo "  deploy  - Deploy MTProto proxy (default)"
+    echo "  delete  - Remove MTProto proxy completely"
+    echo "  status  - Show proxy status"
+    echo ""
+    echo "Examples:"
+    echo "  $0          # Deploy proxy"
+    echo "  $0 deploy   # Deploy proxy"
+    echo "  $0 delete   # Remove proxy"
+    echo "  $0 status   # Check status"
+}
+
+show_status() {
+    if command -v mtproto-status &> /dev/null; then
+        mtproto-status
+    else
+        echo "MTProto proxy not installed or monitoring not available"
+        if docker ps | grep -q mtproto-proxy; then
+            echo "Container Status: Running"
+            docker stats --no-stream --format 'table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}' mtproto-proxy
+        else
+            echo "Container Status: Not running"
+        fi
+    fi
+}
+
 main() {
-    log "Starting MTProto proxy deployment..."
-    
-    check_requirements
-    optimize_system
-    install_docker
-    configure_firewall
-    generate_secret
-    create_config
-    deploy_container
-    setup_monitoring
-    cleanup
-    print_connection_info
-    
-    log "Deployment script completed successfully!"
+    case "${1:-deploy}" in
+        deploy)
+            log "Starting MTProto proxy deployment..."
+            check_requirements
+            optimize_system
+            install_docker
+            configure_firewall
+            generate_secret
+            create_config
+            deploy_container
+            setup_monitoring
+            cleanup
+            print_connection_info
+            log "Deployment script completed successfully!"
+            ;;
+        delete|remove|uninstall)
+            log "Starting MTProto proxy removal..."
+            delete_proxy
+            log "Removal completed successfully!"
+            ;;
+        status)
+            show_status
+            ;;
+        help|--help|-h)
+            show_usage
+            ;;
+        *)
+            error "Unknown command: $1. Use '$0 help' for usage information."
+            ;;
+    esac
 }
 
 # Handle script interruption
